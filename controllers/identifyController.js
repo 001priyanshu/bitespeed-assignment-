@@ -1,6 +1,54 @@
 const Contact = require('../models/contact');
 const { Op } = require('sequelize');
 
+const fetchContactsByEmailOrPhone = async (email, phoneNumber) => {
+  return await Contact.findAll({
+    where: {
+      [Op.or]: [
+        email ? { email } : null,
+        phoneNumber ? { phoneNumber } : null
+      ].filter(Boolean)
+    },
+    order: [['createdAt', 'ASC']]
+  });
+};
+
+const fetchLinkedContacts = async (contacts) => {
+  const allContactIds = new Set();
+  for (const contact of contacts) {
+    allContactIds.add(contact.id);
+    if (contact.linkedId) allContactIds.add(contact.linkedId);
+  }
+
+  return await Contact.findAll({
+    where: {
+      [Op.or]: [
+        { id: [...allContactIds] },
+        { linkedId: [...allContactIds] }
+      ]
+    },
+    order: [['createdAt', 'ASC']]
+  });
+};
+
+const buildResponse = (primaryContact, contacts) => {
+  const emails = [...new Set(contacts.map(c => c.email).filter(Boolean))];
+  const phoneNumbers = [...new Set(contacts.map(c => c.phoneNumber).filter(Boolean))];
+  const secondaryContactIds = contacts
+    .filter(c => c.linkPrecedence === 'secondary')
+    .map(c => c.id);
+
+  return {
+    contact: {
+      primaryContactId: primaryContact.id,
+      emails,
+      phoneNumbers,
+      secondaryContactIds
+    }
+  };
+};
+
+
 exports.identifyContact = async (req, res) => {
   const { email, phoneNumber } = req.body;
 
@@ -9,50 +57,17 @@ exports.identifyContact = async (req, res) => {
   }
 
   try {
-    const contacts = await Contact.findAll({
-      where: {
-        [Op.or]: [
-          email ? { email } : null,
-          phoneNumber ? { phoneNumber } : null
-        ].filter(Boolean)
-      },
-      order: [['createdAt', 'ASC']]
-    });
-
-    let primaryContact = null;
-    let allLinkedContacts = [];
+    const contacts = await fetchContactsByEmailOrPhone(email, phoneNumber);
 
     if (contacts.length === 0) {
       const newContact = await Contact.create({ email, phoneNumber, linkPrecedence: 'primary' });
-      return res.status(200).json({
-        contact: {
-          primaryContatctId: newContact.id,
-          emails: [newContact.email],
-          phoneNumbers: [newContact.phoneNumber],
-          secondaryContactIds: []
-        }
-      });
+      return res.status(200).json(buildResponse(newContact, [newContact]));
     }
 
-    const allContactIds = new Set();
-    for (const contact of contacts) {
-      allContactIds.add(contact.id);
-      if (contact.linkedId) allContactIds.add(contact.linkedId);
-    }
+    const linkedContacts = await fetchLinkedContacts(contacts);
+    const primaryContact = linkedContacts.find(c => c.linkPrecedence === 'primary') || linkedContacts[0];
 
-    allLinkedContacts = await Contact.findAll({
-      where: {
-        [Op.or]: [
-          { id: [...allContactIds] },
-          { linkedId: [...allContactIds] }
-        ]
-      },
-      order: [['createdAt', 'ASC']]
-    });
-
-    primaryContact = allLinkedContacts.find(c => c.linkPrecedence === 'primary') || allLinkedContacts[0];
-
-    const isDuplicate = allLinkedContacts.some(c => c.email === email && c.phoneNumber === phoneNumber);
+    const isDuplicate = linkedContacts.some(c => c.email === email && c.phoneNumber === phoneNumber);
     if (!isDuplicate) {
       await Contact.create({
         email,
@@ -72,20 +87,7 @@ exports.identifyContact = async (req, res) => {
       order: [['createdAt', 'ASC']]
     });
 
-    const emails = [...new Set(updatedContacts.map(c => c.email).filter(Boolean))];
-    const phoneNumbers = [...new Set(updatedContacts.map(c => c.phoneNumber).filter(Boolean))];
-    const secondaryContactIds = updatedContacts
-      .filter(c => c.linkPrecedence === 'secondary')
-      .map(c => c.id);
-
-    return res.status(200).json({
-      contact: {
-        primaryContatctId: primaryContact.id,
-        emails,
-        phoneNumbers,
-        secondaryContactIds
-      }
-    });
+    return res.status(200).json(buildResponse(primaryContact, updatedContacts));
 
   } catch (error) {
     console.error('❌ Error in /identify:', error);
