@@ -12,7 +12,7 @@ app.get('/health', (req, res) => {
 });
 
 
-app.use('/identify', identifyRoutes);
+app.use('/', identifyRoutes);
 
 async function start() {
   try {
