@@ -1,6 +1,6 @@
 const express = require('express');
 const { sequelize } = require('./config/database');
-
+const identifyRoutes = require('./routes/identifyRoutes');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -12,6 +12,7 @@ app.get('/health', (req, res) => {
 });
 
 
+app.use('/identify', identifyRoutes);
 
 async function start() {
   try {
